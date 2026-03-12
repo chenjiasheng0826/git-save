@@ -1,7 +1,7 @@
 import { app, BrowserWindow } from 'electron';
-import * as path from 'path';
-import { registerIpcHandlers } from './ipc-handlers';
-import { stopAllAutoSave } from './auto-save';
+import path from 'path';
+import { registerIpcHandlers } from './ipc-handlers.js';
+import { stopAllAutoSave } from './auto-save.js';
 
 const isDev = !app.isPackaged;
 

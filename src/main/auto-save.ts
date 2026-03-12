@@ -1,4 +1,4 @@
-import { createSave, getStatus } from './git-service';
+import { createSave, getStatus } from './git-service.js';
 
 const autoSaveTimers = new Map<string, ReturnType<typeof setInterval>>();
 

@@ -1,7 +1,7 @@
-import * as path from 'path';
-import * as fs from 'fs';
-import { getProjects, addProjectEntry, removeProjectEntry, type ProjectEntry } from './store';
-import { isGitRepo, initRepo, listSaves } from './git-service';
+import path from 'path';
+import fs from 'fs';
+import { getProjects, addProjectEntry, removeProjectEntry, type ProjectEntry } from './store.js';
+import { isGitRepo, initRepo, listSaves } from './git-service.js';
 
 interface ProjectInfo {
   path: string;
