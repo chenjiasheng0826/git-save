@@ -214,6 +214,13 @@ export function restoreSave(
     try {
       const git = getGit(projectPath);
 
+      // 获取当前分支名
+      let branchName = 'master';
+      try {
+        const b = (await git.revparse(['--abbrev-ref', 'HEAD'])).trim();
+        if (b && b !== 'HEAD') branchName = b;
+      } catch { /* use default */ }
+
       // 先自动存档当前状态
       const status = await git.status();
       if (status.files.length > 0) {
@@ -221,9 +228,9 @@ export function restoreSave(
         await git.commit(`自动存档：读档前自动保存 (目标: ${hash.substring(0, 7)})`);
       }
 
-      // 使用 stash 保存当前状态，然后 checkout 到目标 commit
-      await git.stash();
-      await git.checkout(hash);
+      // 将当前分支强制指向目标 commit，避免 detached HEAD
+      await git.raw(['checkout', branchName]);
+      await git.raw(['reset', '--hard', hash]);
 
       return { success: true };
     } catch (err) {
