@@ -7,6 +7,7 @@ import { useSaveStore } from '../stores/save-store'
 import { useProjectStore } from '../stores/project-store'
 import { useUiStore } from '../stores/ui-store'
 import { useToastStore } from '../stores/toast-store'
+import { api } from '../lib/ipc-client'
 import type { SaveRecord } from '../lib/ipc-client'
 
 function groupByDate(saves: SaveRecord[]): { label: string; items: SaveRecord[] }[] {
@@ -32,7 +33,7 @@ function groupByDate(saves: SaveRecord[]): { label: string; items: SaveRecord[] 
 export default function SaveTimeline() {
   const { saves, listSaves, createSave, restoreSave, deleteSave } = useSaveStore()
   const { currentProject } = useProjectStore()
-  const { changedFileCount } = useUiStore()
+  const { changedFileCount, setChangedFileCount } = useUiStore()
   const { addToast } = useToastStore()
   const [saving, setSaving] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
@@ -41,8 +42,12 @@ export default function SaveTimeline() {
   useEffect(() => {
     if (currentProject?.path) {
       listSaves(currentProject.path)
+      // 获取真实的变更文件数
+      api.status.changes(currentProject.path).then((info) => {
+        setChangedFileCount(info?.files?.length ?? 0)
+      }).catch(() => {})
     }
-  }, [currentProject?.path, listSaves])
+  }, [currentProject?.path, listSaves, setChangedFileCount])
 
   const filteredSaves = searchQuery
     ? saves.filter((s) => s.message.toLowerCase().includes(searchQuery.toLowerCase()))
