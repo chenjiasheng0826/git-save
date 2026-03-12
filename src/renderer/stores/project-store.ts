@@ -31,13 +31,13 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     set({ loading: true })
     try {
       const list = await api.project.list()
-      if (list) {
-        const projects: Project[] = list.map((p, i) => ({
+      if (list && Array.isArray(list)) {
+        const projects: Project[] = list.map((p: any, i: number) => ({
           id: String(i),
           name: p.name,
           path: p.path,
-          saveCount: 0,
-          lastSaveTime: null,
+          saveCount: p.saveCount ?? 0,
+          lastSaveTime: p.lastSaveTime ? new Date(p.lastSaveTime).getTime() : null,
         }))
         set({ projects })
       }

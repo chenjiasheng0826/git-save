@@ -5,8 +5,6 @@ import { useUiStore } from '../stores/ui-store'
 const navItems = [
   { to: '/projects', label: '项目', icon: '📁' },
   { to: '/timeline', label: '存档', icon: '💾' },
-  { to: '/compare', label: '对比', icon: '🔍' },
-  { to: '/branches', label: '平行世界', icon: '🌿' },
   { to: '/settings', label: '设置', icon: '⚙️' },
 ]
 

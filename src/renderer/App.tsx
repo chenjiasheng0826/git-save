@@ -5,8 +5,6 @@ import ToastContainer from './components/Toast'
 import ProjectList from './pages/ProjectList'
 import SaveTimeline from './pages/SaveTimeline'
 import SaveDetail from './pages/SaveDetail'
-import SaveCompare from './pages/SaveCompare'
-import BranchView from './pages/BranchView'
 import Settings from './pages/Settings'
 
 export default function App() {
@@ -21,8 +19,6 @@ export default function App() {
               <Route path="/projects" element={<ProjectList />} />
               <Route path="/timeline" element={<SaveTimeline />} />
               <Route path="/timeline/:saveId" element={<SaveDetail />} />
-              <Route path="/compare" element={<SaveCompare />} />
-              <Route path="/branches" element={<BranchView />} />
               <Route path="/settings" element={<Settings />} />
             </Routes>
           </div>

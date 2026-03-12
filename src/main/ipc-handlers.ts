@@ -1,4 +1,4 @@
-import { ipcMain, dialog } from 'electron';
+import { ipcMain, dialog, BrowserWindow } from 'electron';
 import * as gitService from './git-service.js';
 import * as projectManager from './project-manager.js';
 import { startAutoSave, stopAutoSave } from './auto-save.js';
@@ -10,15 +10,20 @@ export function registerIpcHandlers(): void {
     return await projectManager.listAllProjects();
   });
 
-  ipcMain.handle('dialog:open-folder', async () => {
-    const result = await dialog.showOpenDialog({
-      properties: ['openDirectory'],
-      title: '选择项目文件夹'
-    });
-    if (result.canceled || result.filePaths.length === 0) {
-      return { success: false, path: '' };
+  ipcMain.handle('dialog:open-folder', async (event) => {
+    try {
+      const win = BrowserWindow.fromWebContents(event.sender);
+      const result = await dialog.showOpenDialog(win!, {
+        properties: ['openDirectory'],
+        title: '选择项目文件夹'
+      });
+      if (result.canceled || result.filePaths.length === 0) {
+        return { success: false, path: '' };
+      }
+      return { success: true, path: result.filePaths[0] };
+    } catch (err) {
+      return { success: false, path: '', error: (err as Error).message };
     }
-    return { success: true, path: result.filePaths[0] };
   });
 
   ipcMain.handle('project:add', async (_e, projectPath: string) => {

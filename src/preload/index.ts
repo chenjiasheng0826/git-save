@@ -103,39 +103,62 @@ export interface GitSaveApi {
   };
 }
 
+// Helper: unwrap { success, data } from backend ServiceResult
+function unwrapData<T>(r: any, fallback: T): T {
+  if (r && r.success && r.data !== undefined) return r.data;
+  return fallback;
+}
+
+// Helper: convert save's date string to timestamp number
+function mapSave(s: any): any {
+  return {
+    ...s,
+    timestamp: s.timestamp ?? (s.date ? new Date(s.date).getTime() : Date.now()),
+  };
+}
+
 const api: GitSaveApi = {
   project: {
-    list: () => ipcRenderer.invoke('project:list'),
+    list: () => ipcRenderer.invoke('project:list').then((r: any) => unwrapData(r, [])),
     add: (projectPath) => ipcRenderer.invoke('project:add', projectPath),
     remove: (projectPath) => ipcRenderer.invoke('project:remove', projectPath),
     initGit: (projectPath) => ipcRenderer.invoke('project:init-git', projectPath),
     openFolder: () => ipcRenderer.invoke('dialog:open-folder'),
   },
   save: {
-    create: (projectPath, message) => ipcRenderer.invoke('save:create', projectPath, message),
-    list: (projectPath) => ipcRenderer.invoke('save:list', projectPath),
-    detail: (projectPath, hash) => ipcRenderer.invoke('save:detail', projectPath, hash),
+    create: (projectPath, message) => ipcRenderer.invoke('save:create', projectPath, message)
+      .then((r: any) => r?.success ? { success: true, ...mapSave(r.data ?? r) } : r),
+    list: (projectPath) => ipcRenderer.invoke('save:list', projectPath)
+      .then((r: any) => (unwrapData(r, []) as any[]).map(mapSave)),
+    detail: (projectPath, hash) => ipcRenderer.invoke('save:detail', projectPath, hash)
+      .then((r: any) => { const d = unwrapData(r, r); return d ? mapSave(d) : d; }),
     restore: (projectPath, hash) => ipcRenderer.invoke('save:restore', projectPath, hash),
-    compare: (projectPath, hashA, hashB) => ipcRenderer.invoke('save:compare', projectPath, hashA, hashB),
+    compare: (projectPath, hashA, hashB) => ipcRenderer.invoke('save:compare', projectPath, hashA, hashB)
+      .then((r: any) => unwrapData(r, r)),
     delete: (projectPath, hash) => ipcRenderer.invoke('save:delete', projectPath, hash),
-    search: (projectPath, keyword) => ipcRenderer.invoke('save:search', projectPath, keyword),
+    search: (projectPath, keyword) => ipcRenderer.invoke('save:search', projectPath, keyword)
+      .then((r: any) => (unwrapData(r, []) as any[]).map(mapSave)),
   },
   tag: {
     set: (projectPath, hash, tag) => ipcRenderer.invoke('tag:set', projectPath, hash, tag),
-    get: (projectPath, hash) => ipcRenderer.invoke('tag:get', projectPath, hash),
+    get: (projectPath, hash) => ipcRenderer.invoke('tag:get', projectPath, hash)
+      .then((r: any) => unwrapData(r, { tags: [] })),
   },
   branch: {
-    list: (projectPath) => ipcRenderer.invoke('branch:list', projectPath),
+    list: (projectPath) => ipcRenderer.invoke('branch:list', projectPath)
+      .then((r: any) => unwrapData(r, { current: '', branches: [] })),
     create: (projectPath, name) => ipcRenderer.invoke('branch:create', projectPath, name),
     switch: (projectPath, name) => ipcRenderer.invoke('branch:switch', projectPath, name),
     merge: (projectPath, source) => ipcRenderer.invoke('branch:merge', projectPath, source),
   },
   status: {
-    changes: (projectPath) => ipcRenderer.invoke('status:changes', projectPath),
+    changes: (projectPath) => ipcRenderer.invoke('status:changes', projectPath)
+      .then((r: any) => unwrapData(r, { files: [], hasChanges: false })),
     autoSave: (projectPath, enabled) => ipcRenderer.invoke('status:auto-save', projectPath, enabled),
   },
   settings: {
-    get: () => ipcRenderer.invoke('settings:get'),
+    get: () => ipcRenderer.invoke('settings:get')
+      .then((r: any) => unwrapData(r, {} as AppSettings)),
     set: (key, value) => ipcRenderer.invoke('settings:set', key, value),
   },
 };
