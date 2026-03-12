@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import ConfirmDialog from '../components/ConfirmDialog'
 import { useProjectStore } from '../stores/project-store'
 import { useUiStore } from '../stores/ui-store'
@@ -10,22 +10,28 @@ interface Branch {
   isCurrent: boolean
 }
 
-// Mock 数据
-const mockBranches: Branch[] = [
-  { name: 'main', isCurrent: true },
-  { name: '实验功能', isCurrent: false },
-  { name: '备份-0312', isCurrent: false },
-]
-
 export default function BranchView() {
   const { currentProject } = useProjectStore()
   const { changedFileCount } = useUiStore()
   const { addToast } = useToastStore()
-  const [branches, setBranches] = useState<Branch[]>(mockBranches)
+  const [branches, setBranches] = useState<Branch[]>([])
   const [showCreate, setShowCreate] = useState(false)
   const [newName, setNewName] = useState('')
   const [confirmSwitch, setConfirmSwitch] = useState<string | null>(null)
   const [confirmMerge, setConfirmMerge] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (currentProject?.path) {
+      api.branch.list(currentProject.path).then((info) => {
+        if (info?.branches) {
+          setBranches(info.branches.map((name: string) => ({
+            name,
+            isCurrent: name === info.current,
+          })))
+        }
+      }).catch(() => {})
+    }
+  }, [currentProject?.path])
 
   const currentBranch = branches.find((b) => b.isCurrent)
 

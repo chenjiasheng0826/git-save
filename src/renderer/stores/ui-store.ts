@@ -18,6 +18,6 @@ export const useUiStore = create<UiState>((set) => ({
   setLoading: (loading) => set({ loading }),
   error: null,
   setError: (error) => set({ error }),
-  changedFileCount: 3,
+  changedFileCount: 0,
   setChangedFileCount: (changedFileCount) => set({ changedFileCount }),
 }))

@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import SaveForm from '../components/SaveForm'
 import SaveCard from '../components/SaveCard'
 import SearchBar from '../components/SearchBar'
@@ -6,6 +6,8 @@ import ConfirmDialog from '../components/ConfirmDialog'
 import { useSaveStore } from '../stores/save-store'
 import { useProjectStore } from '../stores/project-store'
 import { useUiStore } from '../stores/ui-store'
+import { useToastStore } from '../stores/toast-store'
+import { api } from '../lib/ipc-client'
 import type { SaveRecord } from '../lib/ipc-client'
 
 function groupByDate(saves: SaveRecord[]): { label: string; items: SaveRecord[] }[] {
@@ -29,12 +31,23 @@ function groupByDate(saves: SaveRecord[]): { label: string; items: SaveRecord[] 
 }
 
 export default function SaveTimeline() {
-  const { saves, createSave, restoreSave, deleteSave } = useSaveStore()
+  const { saves, listSaves, createSave, restoreSave, deleteSave } = useSaveStore()
   const { currentProject } = useProjectStore()
-  const { changedFileCount } = useUiStore()
+  const { changedFileCount, setChangedFileCount } = useUiStore()
+  const { addToast } = useToastStore()
   const [saving, setSaving] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [confirmAction, setConfirmAction] = useState<{ type: 'restore' | 'delete'; hash: string } | null>(null)
+
+  useEffect(() => {
+    if (currentProject?.path) {
+      listSaves(currentProject.path)
+      // 获取真实的变更文件数
+      api.status.changes(currentProject.path).then((info) => {
+        setChangedFileCount(info?.files?.length ?? 0)
+      }).catch(() => {})
+    }
+  }, [currentProject?.path, listSaves, setChangedFileCount])
 
   const filteredSaves = searchQuery
     ? saves.filter((s) => s.message.toLowerCase().includes(searchQuery.toLowerCase()))
@@ -53,9 +66,20 @@ export default function SaveTimeline() {
   const handleConfirm = async () => {
     if (!confirmAction || !currentProject) return
     if (confirmAction.type === 'restore') {
-      await restoreSave(currentProject.path, confirmAction.hash)
+      const ok = await restoreSave(currentProject.path, confirmAction.hash)
+      if (ok) {
+        addToast('success', '读档成功')
+        await listSaves(currentProject.path)
+      } else {
+        addToast('error', '读档失败')
+      }
     } else {
-      await deleteSave(currentProject.path, confirmAction.hash)
+      const ok = await deleteSave(currentProject.path, confirmAction.hash)
+      if (ok) {
+        addToast('success', '存档已删除')
+      } else {
+        addToast('error', '删除失败，请重试')
+      }
     }
     setConfirmAction(null)
   }

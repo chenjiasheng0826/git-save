@@ -1,7 +1,8 @@
-import { useEffect } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useProjectStore } from '../stores/project-store'
 import { useToastStore } from '../stores/toast-store'
+import ConfirmDialog from '../components/ConfirmDialog'
 import { api } from '../lib/ipc-client'
 
 function timeAgo(ts: number | null): string {
@@ -16,14 +17,32 @@ function timeAgo(ts: number | null): string {
   return `${days} 天前`
 }
 
+interface ContextMenu {
+  x: number
+  y: number
+  project: { id: string; name: string; path: string }
+}
+
 export default function ProjectList() {
-  const { projects, loading, setCurrentProject, listProjects } = useProjectStore()
+  const { projects, loading, setCurrentProject, listProjects, removeProject } = useProjectStore()
   const { addToast } = useToastStore()
   const navigate = useNavigate()
+  const [contextMenu, setContextMenu] = useState<ContextMenu | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState<ContextMenu['project'] | null>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     listProjects()
   }, [listProjects])
+
+  // 点击其他地方关闭右键菜单
+  useEffect(() => {
+    const handleClick = () => setContextMenu(null)
+    if (contextMenu) {
+      document.addEventListener('click', handleClick)
+      return () => document.removeEventListener('click', handleClick)
+    }
+  }, [contextMenu])
 
   const handleSelect = (project: typeof projects[0]) => {
     setCurrentProject(project)
@@ -42,6 +61,23 @@ export default function ProjectList() {
     } catch {
       addToast('error', '添加项目失败，请重试')
     }
+  }
+
+  const handleContextMenu = (e: React.MouseEvent, project: typeof projects[0]) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setContextMenu({ x: e.clientX, y: e.clientY, project })
+  }
+
+  const handleRemove = async () => {
+    if (!confirmDelete) return
+    const ok = await removeProject(confirmDelete.path)
+    if (ok) {
+      addToast('success', `已移除项目「${confirmDelete.name}」`)
+    } else {
+      addToast('error', '移除失败，请重试')
+    }
+    setConfirmDelete(null)
   }
 
   return (
@@ -85,6 +121,7 @@ export default function ProjectList() {
             <div
               key={project.id}
               onClick={() => handleSelect(project)}
+              onContextMenu={(e) => handleContextMenu(e, project)}
               className="cursor-pointer rounded-xl border border-surface-200 bg-white p-5 shadow-sm transition hover:border-primary-300 hover:shadow-md"
             >
               <div className="flex items-center gap-3">
@@ -114,6 +151,47 @@ export default function ProjectList() {
           </div>
         </div>
       )}
+
+      {/* 右键菜单 */}
+      {contextMenu && (
+        <div
+          ref={menuRef}
+          style={{ position: 'fixed', left: contextMenu.x, top: contextMenu.y, zIndex: 9999 }}
+          className="min-w-[140px] rounded-lg border border-surface-200 bg-white py-1 shadow-lg"
+        >
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              handleSelect(contextMenu.project as typeof projects[0])
+              setContextMenu(null)
+            }}
+            className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-surface-700 hover:bg-surface-50"
+          >
+            <span>📂</span> 打开项目
+          </button>
+          <div className="mx-2 my-1 h-px bg-surface-100" />
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              setConfirmDelete(contextMenu.project)
+              setContextMenu(null)
+            }}
+            className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-red-500 hover:bg-red-50"
+          >
+            <span>🗑</span> 移除项目
+          </button>
+        </div>
+      )}
+
+      <ConfirmDialog
+        open={!!confirmDelete}
+        title="确认移除项目"
+        description={`确定要从列表中移除「${confirmDelete?.name}」吗？这不会删除你的项目文件，只是从 GitSave 中移除。`}
+        confirmText="移除"
+        danger
+        onConfirm={handleRemove}
+        onCancel={() => setConfirmDelete(null)}
+      />
     </div>
   )
 }

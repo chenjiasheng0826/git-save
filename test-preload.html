@@ -1,0 +1,11 @@
+<!DOCTYPE html>
+<html><body>
+<h1>Preload Test</h1>
+<pre id="out">checking...</pre>
+<script>
+  document.getElementById('out').textContent = 
+    'gitSaveApi exists: ' + (typeof window.gitSaveApi !== 'undefined') + '\n' +
+    'keys: ' + (window.gitSaveApi ? Object.keys(window.gitSaveApi).join(', ') : 'N/A') + '\n' +
+    'openFolder: ' + (window.gitSaveApi?.project?.openFolder ? 'YES' : 'NO');
+</script>
+</body></html>

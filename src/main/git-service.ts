@@ -59,6 +59,15 @@ function getGit(projectPath: string): SimpleGit {
   return simpleGit(projectPath);
 }
 
+// 串行队列：同一项目的 git 操作排队执行，避免 index.lock 冲突
+const gitQueues = new Map<string, Promise<unknown>>();
+function withGitLock<T>(projectPath: string, fn: () => Promise<T>): Promise<T> {
+  const prev = gitQueues.get(projectPath) ?? Promise.resolve();
+  const next = prev.then(fn, fn);
+  gitQueues.set(projectPath, next);
+  return next;
+}
+
 function parseFileStatus(statusChar: string): FileChange['status'] {
   switch (statusChar) {
     case 'A': return 'added';
@@ -68,212 +77,245 @@ function parseFileStatus(statusChar: string): FileChange['status'] {
   }
 }
 
-export async function initRepo(projectPath: string): Promise<ServiceResult> {
-  try {
-    const git = getGit(projectPath);
-    await git.init();
+export function initRepo(projectPath: string): Promise<ServiceResult> {
+  return withGitLock(projectPath, async () => {
+    try {
+      const git = getGit(projectPath);
+      await git.init();
 
-    const gitignorePath = path.join(projectPath, '.gitignore');
-    if (!fs.existsSync(gitignorePath)) {
-      fs.writeFileSync(gitignorePath, DEFAULT_GITIGNORE, 'utf-8');
+      const gitignorePath = path.join(projectPath, '.gitignore');
+      if (!fs.existsSync(gitignorePath)) {
+        fs.writeFileSync(gitignorePath, DEFAULT_GITIGNORE, 'utf-8');
+      }
+
+      await git.add('-A');
+      await git.commit('初始存档：项目初始化');
+
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
     }
-
-    await git.add('-A');
-    await git.commit('初始存档：项目初始化');
-
-    return { success: true };
-  } catch (err) {
-    return { success: false, error: (err as Error).message };
-  }
+  });
 }
 
-export async function createSave(
+export function createSave(
   projectPath: string,
   message: string
 ): Promise<ServiceResult<SaveInfo>> {
-  try {
-    const git = getGit(projectPath);
-    const status = await git.status();
+  return withGitLock(projectPath, async () => {
+    try {
+      const git = getGit(projectPath);
+      const status = await git.status();
 
-    if (status.files.length === 0) {
-      return { success: false, error: '没有需要存档的变更' };
+      if (status.files.length === 0) {
+        return { success: false, error: '没有需要存档的变更' };
+      }
+
+      await git.add('-A');
+      const result = await git.commit(message);
+
+      const hash = result.commit || '';
+      return {
+        success: true,
+        data: {
+          hash,
+          message,
+          date: new Date().toISOString(),
+          filesChanged: status.files.length,
+        },
+      };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
     }
-
-    await git.add('-A');
-    const result = await git.commit(message);
-
-    const hash = result.commit || '';
-    return {
-      success: true,
-      data: {
-        hash,
-        message,
-        date: new Date().toISOString(),
-        filesChanged: status.files.length,
-      },
-    };
-  } catch (err) {
-    return { success: false, error: (err as Error).message };
-  }
+  });
 }
 
-export async function listSaves(
+export function listSaves(
   projectPath: string,
   limit = 50,
   offset = 0
 ): Promise<ServiceResult<SaveInfo[]>> {
-  try {
-    const git = getGit(projectPath);
-    const log: LogResult = await git.log({
-      maxCount: limit + offset,
-      '--stat': null,
-    } as Record<string, unknown>);
+  return withGitLock(projectPath, async () => {
+    try {
+      const git = getGit(projectPath);
+      const log: LogResult = await git.log({
+        maxCount: limit + offset + 50,
+        '--stat': null,
+      } as Record<string, unknown>);
 
-    const saves: SaveInfo[] = log.all.slice(offset).map((entry) => ({
-      hash: entry.hash,
-      message: entry.message,
-      date: entry.date,
-      filesChanged: 0,
-    }));
+      // 获取被标记删除的 hash 列表
+      let deletedHashes: Set<string> = new Set();
+      try {
+        const notesRaw = await git.raw(['notes', '--ref=gitsave-deleted', 'list']);
+        for (const line of notesRaw.trim().split('\n')) {
+          const parts = line.trim().split(/\s+/);
+          if (parts.length >= 2) deletedHashes.add(parts[1]);
+        }
+      } catch { /* no notes yet */ }
 
-    return { success: true, data: saves };
-  } catch (err) {
-    return { success: false, error: (err as Error).message };
-  }
-}
-
-export async function getSaveDetail(
-  projectPath: string,
-  hash: string
-): Promise<ServiceResult<SaveDetail>> {
-  try {
-    const git = getGit(projectPath);
-
-    const log = await git.log({ from: hash, to: hash, maxCount: 1 } as Record<string, unknown>);
-    const entry = log.latest;
-    if (!entry) {
-      return { success: false, error: '找不到该存档' };
-    }
-
-    const diffSummary: DiffResult = await git.diffSummary([`${hash}~1`, hash]);
-
-    const files: FileChange[] = diffSummary.files.map((f) => ({
-      path: f.file,
-      status: f.binary ? 'modified' : parseFileStatus((f as unknown as { status?: string }).status || 'M'),
-      additions: 'insertions' in f ? f.insertions : 0,
-      deletions: 'deletions' in f ? f.deletions : 0,
-    }));
-
-    return {
-      success: true,
-      data: {
+      const allSaves = log.all.filter((entry) => !deletedHashes.has(entry.hash));
+      const saves: SaveInfo[] = allSaves.slice(offset, offset + limit).map((entry) => ({
         hash: entry.hash,
         message: entry.message,
         date: entry.date,
-        files,
-      },
-    };
-  } catch (err) {
-    return { success: false, error: (err as Error).message };
-  }
+        filesChanged: 0,
+      }));
+
+      return { success: true, data: saves };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
+  });
 }
 
-export async function restoreSave(
+export function getSaveDetail(
+  projectPath: string,
+  hash: string
+): Promise<ServiceResult<SaveDetail>> {
+  return withGitLock(projectPath, async () => {
+    try {
+      const git = getGit(projectPath);
+
+      const log = await git.log({ from: hash, to: hash, maxCount: 1 } as Record<string, unknown>);
+      const entry = log.latest;
+      if (!entry) {
+        return { success: false, error: '找不到该存档' };
+      }
+
+      const diffSummary: DiffResult = await git.diffSummary([`${hash}~1`, hash]);
+
+      const files: FileChange[] = diffSummary.files.map((f) => ({
+        path: f.file,
+        status: f.binary ? 'modified' : parseFileStatus((f as unknown as { status?: string }).status || 'M'),
+        additions: 'insertions' in f ? f.insertions : 0,
+        deletions: 'deletions' in f ? f.deletions : 0,
+      }));
+
+      return {
+        success: true,
+        data: {
+          hash: entry.hash,
+          message: entry.message,
+          date: entry.date,
+          files,
+        },
+      };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
+  });
+}
+
+export function restoreSave(
   projectPath: string,
   hash: string
 ): Promise<ServiceResult> {
-  try {
-    const git = getGit(projectPath);
+  return withGitLock(projectPath, async () => {
+    try {
+      const git = getGit(projectPath);
 
-    // 先自动存档当前状态
-    const status = await git.status();
-    if (status.files.length > 0) {
-      await git.add('-A');
-      await git.commit(`自动存档：读档前自动保存 (目标: ${hash.substring(0, 7)})`);
+      // 获取当前分支名
+      let branchName = 'master';
+      try {
+        const b = (await git.revparse(['--abbrev-ref', 'HEAD'])).trim();
+        if (b && b !== 'HEAD') branchName = b;
+      } catch { /* use default */ }
+
+      // 先自动存档当前状态
+      const status = await git.status();
+      if (status.files.length > 0) {
+        await git.add('-A');
+        await git.commit(`自动存档：读档前自动保存 (目标: ${hash.substring(0, 7)})`);
+      }
+
+      // 将当前分支强制指向目标 commit，避免 detached HEAD
+      await git.raw(['checkout', branchName]);
+      await git.raw(['reset', '--hard', hash]);
+
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
     }
-
-    // 使用 stash 保存当前状态，然后 checkout 到目标 commit
-    await git.stash();
-    await git.checkout(hash);
-
-    return { success: true };
-  } catch (err) {
-    return { success: false, error: (err as Error).message };
-  }
+  });
 }
 
-export async function compareSaves(
+export function compareSaves(
   projectPath: string,
   hashA: string,
   hashB: string
 ): Promise<ServiceResult<FileDiff[]>> {
-  try {
-    const git = getGit(projectPath);
-    const diff = await git.diff([hashA, hashB]);
-    const diffSummary = await git.diffSummary([hashA, hashB]);
+  return withGitLock(projectPath, async () => {
+    try {
+      const git = getGit(projectPath);
+      const diff = await git.diff([hashA, hashB]);
+      const diffSummary = await git.diffSummary([hashA, hashB]);
 
-    const diffs: FileDiff[] = [];
-    for (const file of diffSummary.files) {
-      let oldContent = '';
-      let newContent = '';
-      try {
-        oldContent = await git.show([`${hashA}:${file.file}`]);
-      } catch { /* file didn't exist in hashA */ }
-      try {
-        newContent = await git.show([`${hashB}:${file.file}`]);
-      } catch { /* file didn't exist in hashB */ }
+      const diffs: FileDiff[] = [];
+      for (const file of diffSummary.files) {
+        let oldContent = '';
+        let newContent = '';
+        try {
+          oldContent = await git.show([`${hashA}:${file.file}`]);
+        } catch { /* file didn't exist in hashA */ }
+        try {
+          newContent = await git.show([`${hashB}:${file.file}`]);
+        } catch { /* file didn't exist in hashB */ }
 
-      diffs.push({
-        path: file.file,
-        oldContent,
-        newContent,
-        status: parseFileStatus((file as unknown as { status?: string }).status || 'M'),
-      });
+        diffs.push({
+          path: file.file,
+          oldContent,
+          newContent,
+          status: parseFileStatus((file as unknown as { status?: string }).status || 'M'),
+        });
+      }
+
+      void diff;
+      return { success: true, data: diffs };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
     }
-
-    void diff;
-    return { success: true, data: diffs };
-  } catch (err) {
-    return { success: false, error: (err as Error).message };
-  }
+  });
 }
 
-export async function deleteSave(
+export function deleteSave(
   projectPath: string,
   hash: string
 ): Promise<ServiceResult> {
-  try {
+  return withGitLock(projectPath, async () => {
     const git = getGit(projectPath);
-    // 使用 revert 而非 rebase 删除，更安全
-    await git.revert(hash);
-    return { success: true };
-  } catch (err) {
-    return { success: false, error: (err as Error).message };
-  }
+    try {
+      await git.raw(['notes', '--ref=gitsave-deleted', 'add', '-m', 'deleted', hash]);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
+  });
 }
 
-export async function getStatus(projectPath: string): Promise<ServiceResult<StatusInfo>> {
-  try {
-    const git = getGit(projectPath);
-    const status = await git.status();
+export function getStatus(projectPath: string): Promise<ServiceResult<StatusInfo>> {
+  return withGitLock(projectPath, async () => {
+    try {
+      const git = getGit(projectPath);
+      const status = await git.status();
 
-    const files: FileChange[] = status.files.map((f) => ({
-      path: f.path,
-      status: parseFileStatus(f.working_dir || f.index || 'M'),
-      additions: 0,
-      deletions: 0,
-    }));
+      const files: FileChange[] = status.files.map((f) => ({
+        path: f.path,
+        status: parseFileStatus(f.working_dir || f.index || 'M'),
+        additions: 0,
+        deletions: 0,
+      }));
 
-    return {
-      success: true,
-      data: {
-        files,
-        hasChanges: status.files.length > 0,
-      },
-    };
-  } catch (err) {
-    return { success: false, error: (err as Error).message };
-  }
+      return {
+        success: true,
+        data: {
+          files,
+          hasChanges: status.files.length > 0,
+        },
+      };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
+  });
 }
 
 export async function isGitRepo(projectPath: string): Promise<boolean> {
@@ -285,25 +327,27 @@ export async function isGitRepo(projectPath: string): Promise<boolean> {
   }
 }
 
-export async function searchSaves(
+export function searchSaves(
   projectPath: string,
   keyword: string
 ): Promise<ServiceResult<SaveInfo[]>> {
-  try {
-    const git = getGit(projectPath);
-    const log = await git.log({ '--grep': keyword } as Record<string, unknown>);
+  return withGitLock(projectPath, async () => {
+    try {
+      const git = getGit(projectPath);
+      const log = await git.log({ '--grep': keyword } as Record<string, unknown>);
 
-    const saves: SaveInfo[] = log.all.map((entry) => ({
-      hash: entry.hash,
-      message: entry.message,
-      date: entry.date,
-      filesChanged: 0,
-    }));
+      const saves: SaveInfo[] = log.all.map((entry) => ({
+        hash: entry.hash,
+        message: entry.message,
+        date: entry.date,
+        filesChanged: 0,
+      }));
 
-    return { success: true, data: saves };
-  } catch (err) {
-    return { success: false, error: (err as Error).message };
-  }
+      return { success: true, data: saves };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
+  });
 }
 
 interface BranchInfo {
@@ -311,83 +355,90 @@ interface BranchInfo {
   branches: string[];
 }
 
-export async function getBranches(projectPath: string): Promise<ServiceResult<BranchInfo>> {
-  try {
-    const git = getGit(projectPath);
-    const summary = await git.branchLocal();
+export function getBranches(projectPath: string): Promise<ServiceResult<BranchInfo>> {
+  return withGitLock(projectPath, async () => {
+    try {
+      const git = getGit(projectPath);
+      const summary = await git.branchLocal();
 
-    return {
-      success: true,
-      data: {
-        current: summary.current,
-        branches: summary.all,
-      },
-    };
-  } catch (err) {
-    return { success: false, error: (err as Error).message };
-  }
-}
-
-export async function createBranch(
-  projectPath: string,
-  branchName: string
-): Promise<ServiceResult> {
-  try {
-    const git = getGit(projectPath);
-    await git.checkoutLocalBranch(branchName);
-    return { success: true };
-  } catch (err) {
-    return { success: false, error: (err as Error).message };
-  }
-}
-
-export async function switchBranch(
-  projectPath: string,
-  branchName: string
-): Promise<ServiceResult> {
-  try {
-    const git = getGit(projectPath);
-
-    // 安全检查：切换前检查未提交变更
-    const status = await git.status();
-    if (status.files.length > 0) {
-      return { success: false, error: '有未保存的变更，请先存档后再切换平行世界' };
+      return {
+        success: true,
+        data: {
+          current: summary.current,
+          branches: summary.all,
+        },
+      };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
     }
-
-    await git.checkout(branchName);
-    return { success: true };
-  } catch (err) {
-    return { success: false, error: (err as Error).message };
-  }
+  });
 }
 
-export async function mergeBranch(
+export function createBranch(
+  projectPath: string,
+  branchName: string
+): Promise<ServiceResult> {
+  return withGitLock(projectPath, async () => {
+    try {
+      const git = getGit(projectPath);
+      await git.checkoutLocalBranch(branchName);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
+  });
+}
+
+export function switchBranch(
+  projectPath: string,
+  branchName: string
+): Promise<ServiceResult> {
+  return withGitLock(projectPath, async () => {
+    try {
+      const git = getGit(projectPath);
+
+      const status = await git.status();
+      if (status.files.length > 0) {
+        return { success: false, error: '有未保存的变更，请先存档后再切换平行世界' };
+      }
+
+      await git.checkout(branchName);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
+  });
+}
+
+export function mergeBranch(
   projectPath: string,
   sourceBranch: string,
   targetBranch?: string
 ): Promise<ServiceResult> {
-  try {
-    const git = getGit(projectPath);
+  return withGitLock(projectPath, async () => {
+    try {
+      const git = getGit(projectPath);
 
-    if (targetBranch) {
-      await git.checkout(targetBranch);
+      if (targetBranch) {
+        await git.checkout(targetBranch);
+      }
+
+      const result = await git.merge([sourceBranch]);
+
+      if (result.failed) {
+        return {
+          success: false,
+          error: `合并冲突：${result.conflicts.map((c) => c.file).join(', ')}`,
+        };
+      }
+
+      return { success: true };
+    } catch (err) {
+      const message = (err as Error).message;
+      if (message.includes('CONFLICTS')) {
+        return { success: false, error: `合并存在冲突，请手动解决: ${message}` };
+      }
+      return { success: false, error: message };
     }
-
-    const result = await git.merge([sourceBranch]);
-
-    if (result.failed) {
-      return {
-        success: false,
-        error: `合并冲突：${result.conflicts.map((c) => c.file).join(', ')}`,
-      };
-    }
-
-    return { success: true };
-  } catch (err) {
-    const message = (err as Error).message;
-    if (message.includes('CONFLICTS')) {
-      return { success: false, error: `合并存在冲突，请手动解决: ${message}` };
-    }
-    return { success: false, error: message };
-  }
+  });
 }
