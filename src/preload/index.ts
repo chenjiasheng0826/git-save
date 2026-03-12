@@ -67,6 +67,7 @@ export interface GitSaveApi {
     add: (projectPath: string) => Promise<{ success: boolean; path: string }>;
     remove: (projectPath: string) => Promise<{ success: boolean; path: string }>;
     initGit: (projectPath: string) => Promise<{ success: boolean; path: string }>;
+    openFolder: () => Promise<{ success: boolean; path: string }>;
   };
   // Save
   save: {
@@ -108,6 +109,7 @@ const api: GitSaveApi = {
     add: (projectPath) => ipcRenderer.invoke('project:add', projectPath),
     remove: (projectPath) => ipcRenderer.invoke('project:remove', projectPath),
     initGit: (projectPath) => ipcRenderer.invoke('project:init-git', projectPath),
+    openFolder: () => ipcRenderer.invoke('dialog:open-folder'),
   },
   save: {
     create: (projectPath, message) => ipcRenderer.invoke('save:create', projectPath, message),
