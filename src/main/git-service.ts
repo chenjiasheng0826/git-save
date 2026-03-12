@@ -1,6 +1,6 @@
 import simpleGit, { SimpleGit, LogResult, DiffResult } from 'simple-git';
-import * as path from 'path';
-import * as fs from 'fs';
+import path from 'path';
+import fs from 'fs';
 
 const DEFAULT_GITIGNORE = `node_modules/
 dist/

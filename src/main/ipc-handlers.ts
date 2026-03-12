@@ -1,8 +1,8 @@
 import { ipcMain } from 'electron';
-import * as gitService from './git-service';
-import * as projectManager from './project-manager';
-import { startAutoSave, stopAutoSave } from './auto-save';
-import { setTagForHash, getTagsForHash, getSettings, setSetting } from './store';
+import * as gitService from './git-service.js';
+import * as projectManager from './project-manager.js';
+import { startAutoSave, stopAutoSave } from './auto-save.js';
+import { setTagForHash, getTagsForHash, getSettings, setSetting } from './store.js';
 
 export function registerIpcHandlers(): void {
   // === Project ===
