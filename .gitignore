@@ -1,2 +1,17 @@
+node_modules/
+dist/
+.DS_Store
+*.log
+.env
+.env.local
+coverage/
+.idea/
+.vscode/
+*.swp
+*.swo
+Thumbs.db
+_batch*.json
+_upload*.json
+
 # SpectrAI worktree isolation
 .spectrai-worktrees/
